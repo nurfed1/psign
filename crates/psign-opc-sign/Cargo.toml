@@ -9,6 +9,6 @@ repository.workspace = true
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
-sha2 = "0.10"
+sha2 = "0.11"
 time = { version = "0.3", features = ["local-offset"] }
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }

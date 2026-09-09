@@ -72,18 +72,18 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-sha1 = "0.10"
+sha2 = "0.11"
+sha1 = "0.11"
 base64 = "0.22"
 goblin = "0.9"
 picky = { version = "7.0.0-rc.23", default-features = false, features = ["pkcs12"] }
-cms = { version = "0.2.3", features = ["builder"], optional = true }
-der = { version = "0.7", features = ["derive"], optional = true }
+cms = { version = "0.3.0-pre.2", features = ["builder"], optional = true }
+der = { version = "0.8", features = ["derive"], optional = true }
 glob = "0.3"
 rand = { version = "0.8", optional = true }
 rayon = "1.10"
-rsa = { version = "0.9.10", features = ["sha2"] }
-x509-cert = "0.2.5"
+rsa = { version = "0.10.0-rc.18", features = ["sha2"] }
+x509-cert = "0.3"
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
 psign-azure-kv-rest = { path = "crates/psign-azure-kv-rest", optional = true }
@@ -108,12 +108,18 @@ windows = { version = "0.59", features = [
 assert_cmd = "2"
 predicates = "3"
 rand = "0.8"
-rsa = { version = "0.9.10", features = ["sha2"] }
+rsa = { version = "0.10.0-rc.18", features = ["sha2"] }
 tempfile = "3"
-x509-cert = { version = "0.2.5", features = ["builder"] }
+x509-cert = { version = "0.3", features = ["builder"] }
 
 [build-dependencies]
 winresource = "0.1.31"
+
+# The published cms 0.3.0 prerelease predates breaking API adjustments in its
+# now-stable cipher dependencies. Use the corresponding upstream fixes until
+# the next cms prerelease is published.
+[patch.crates-io]
+cms = { git = "https://github.com/RustCrypto/formats.git", rev = "2fb80dd7144c6edd2ef780a642de44ab32eadd94" }
 
 [[bin]]
 name = "psign-tool"

@@ -32,18 +32,18 @@ psign-codesigning-rest = { path = "../psign-codesigning-rest", optional = true }
 psign-azure-kv-rest = { path = "../psign-azure-kv-rest", optional = true }
 base64 = { version = "0.22", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
-sha1 = "0.10"
-sha2 = "0.10"
-rsa = { version = "0.9.10", features = ["sha2"] }
-x509-cert = "0.2.5"
+sha1 = "0.11"
+sha2 = "0.11"
+rsa = { version = "0.10.0-rc.18", features = ["sha2"] }
+x509-cert = "0.3"
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
 rand = "0.8"
-rsa = { version = "0.9.10", features = ["sha2"] }
-sha2 = "0.10"
+rsa = { version = "0.10.0-rc.18", features = ["sha2"] }
+sha2 = "0.11"
 tempfile = "3"
-x509-cert = { version = "0.2.5", features = ["builder"] }
+x509-cert = { version = "0.3", features = ["builder"] }
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
