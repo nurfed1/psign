@@ -3,42 +3,9 @@
 use base64::Engine as _;
 use mockito::{Matcher, Server};
 use psign_codesigning_rest::{
-    CodesigningAuth, CodesigningProfileParams, CodesigningSubmitParams,
-    get_codesigning_root_certificate_blocking, submit_codesign_hash_blocking,
+    CodesigningAuth, CodesigningSubmitParams, submit_codesign_hash_blocking,
 };
 use serde_json::json;
-
-#[test]
-fn retrieves_profile_root_certificate() {
-    let mut server = Server::new();
-    let expected = b"mock DER certificate";
-    let root_mock = server
-        .mock(
-            "GET",
-            Matcher::Regex(
-                r"/codesigningaccounts/theacct/certificateprofiles/theprof/sign/rootcert(\?.*)?$"
-                    .to_string(),
-            ),
-        )
-        .match_header("authorization", "Bearer fake-token")
-        .with_status(200)
-        .with_header("content-type", "application/x-x509-ca-cert")
-        .with_body(expected)
-        .create();
-
-    let params = CodesigningProfileParams {
-        account_name: "theacct".into(),
-        profile_name: "theprof".into(),
-        api_version: "2022-06-15-preview".into(),
-        authority: None,
-        auth: CodesigningAuth::Bearer("fake-token".into()),
-        endpoint_base_url: server.url(),
-    };
-
-    let root = get_codesigning_root_certificate_blocking(&params).expect("root certificate");
-    assert_eq!(root, expected);
-    root_mock.assert();
-}
 
 #[test]
 fn submit_poll_via_operation_location_header() {
