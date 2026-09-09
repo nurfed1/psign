@@ -6,6 +6,8 @@ use std::time::Duration;
 pub struct AuthenticodeTrustPolicy {
     /// When true (default), picky enforces Authenticode **code signing** EKU rules on the signer.
     pub strict_code_signing_eku: bool,
+    /// Require the Microsoft Lifetime Signing EKU used by Public Trust Test certificates.
+    pub require_lifetime_signing_eku: bool,
     /// Prefer RFC3161 / Authenticode nested timestamp signing time for **`exact_date`** when present.
     pub prefer_timestamp_signing_time: bool,
     /// When **`prefer_timestamp_signing_time`** is set, fail if no usable timestamp token is found.
@@ -16,6 +18,7 @@ impl Default for AuthenticodeTrustPolicy {
     fn default() -> Self {
         Self {
             strict_code_signing_eku: true,
+            require_lifetime_signing_eku: false,
             prefer_timestamp_signing_time: false,
             require_valid_timestamp: false,
         }
