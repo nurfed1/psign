@@ -24,6 +24,9 @@ use x509_cert::Certificate;
 const EKU_EXTENSION_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.37");
 /// **`id-kp-codeSigning`** (RFC 5280).
 const CODE_SIGNING_EKU_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.3");
+/// Microsoft Lifetime Signing EKU present on Azure Public Trust Test certificates.
+const LIFETIME_SIGNING_EKU_OID: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.311.10.3.13");
 
 /// Validate canonical base-128 subidentifiers without imposing a fixed integer width on each arc.
 fn oid_value_is_well_formed(value: &[u8]) -> bool {
@@ -84,16 +87,25 @@ fn extended_key_usage_contains(der: &[u8], expected: ObjectIdentifier) -> Result
     Ok(found)
 }
 
-fn x509_cert_has_code_signing_eku(cert: &Certificate) -> Result<bool> {
+fn x509_cert_has_eku(cert: &Certificate, expected: ObjectIdentifier) -> Result<bool> {
     let Some(exts) = &cert.tbs_certificate.extensions else {
         return Ok(false);
     };
     for ext in exts.iter().filter(|e| e.extn_id == EKU_EXTENSION_OID) {
-        if extended_key_usage_contains(ext.extn_value.as_bytes(), CODE_SIGNING_EKU_OID)? {
+        if extended_key_usage_contains(ext.extn_value.as_bytes(), expected)? {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+fn picky_cert_has_eku(cert: &Cert, expected: ObjectIdentifier) -> Result<bool> {
+    let der = cert
+        .to_der()
+        .map_err(|e| anyhow!("encode signing certificate: {e}"))?;
+    let x509 = Certificate::from_der(&der)
+        .map_err(|e| anyhow!("decode signing certificate for EKU validation: {e}"))?;
+    x509_cert_has_eku(&x509, expected)
 }
 
 fn signed_data_embedded_picky_certs(sd: &SignedData) -> Result<Vec<Cert>> {
@@ -211,9 +223,16 @@ fn verify_pkcs7_trust_cms_rsa_sha256_fallback(
         anyhow!("CMS fallback: resolve signer certificate (PKCS#7 {pkcs7_index}): {e}")
     })?;
 
-    if policy.strict_code_signing_eku && !x509_cert_has_code_signing_eku(x509_leaf)? {
+    if policy.strict_code_signing_eku && !x509_cert_has_eku(x509_leaf, CODE_SIGNING_EKU_OID)? {
         return Err(anyhow!(
             "CMS fallback: leaf certificate lacks code-signing extended key usage (PKCS#7 {pkcs7_index})"
+        ));
+    }
+    if policy.require_lifetime_signing_eku
+        && !x509_cert_has_eku(x509_leaf, LIFETIME_SIGNING_EKU_OID)?
+    {
+        return Err(anyhow!(
+            "CMS fallback: leaf certificate lacks Microsoft Lifetime Signing extended key usage (PKCS#7 {pkcs7_index})"
         ));
     }
 
@@ -327,6 +346,12 @@ pub fn verify_authenticode_pkcs7_trust(
         .map_err(|e| anyhow!("resolve signing certificate: {e}"))?;
 
     let leaf = leaf.clone();
+    if policy.require_lifetime_signing_eku && !picky_cert_has_eku(&leaf, LIFETIME_SIGNING_EKU_OID)?
+    {
+        return Err(anyhow!(
+            "leaf certificate lacks Microsoft Lifetime Signing extended key usage (PKCS#7 {pkcs7_index})"
+        ));
+    }
     let chain_owned =
         issuer_chain_excluding_leaf_online(&leaf, &mut merged, online, Some(anchors))?;
     let chain_vec: Vec<&Cert> = chain_owned.iter().collect();
@@ -454,6 +479,7 @@ mod tests {
         let der = encode_extended_key_usage(&[TEST_LIFETIME_SIGNING, TEST_IDENTITY, CODE_SIGNING]);
 
         assert!(extended_key_usage_contains(&der, CODE_SIGNING_EKU_OID).unwrap());
+        assert!(extended_key_usage_contains(&der, LIFETIME_SIGNING_EKU_OID).unwrap());
     }
 
     #[test]
@@ -461,6 +487,7 @@ mod tests {
         let der = encode_extended_key_usage(&[PUBLIC_TRUST, PRODUCTION_IDENTITY, CODE_SIGNING]);
 
         assert!(extended_key_usage_contains(&der, CODE_SIGNING_EKU_OID).unwrap());
+        assert!(!extended_key_usage_contains(&der, LIFETIME_SIGNING_EKU_OID).unwrap());
     }
 
     #[test]

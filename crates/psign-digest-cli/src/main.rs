@@ -96,6 +96,9 @@ struct TrustVerifySharedArgs {
     /// Skip picky’s strict **code signing** checks on the signing certificate (`ignore_signing_certificate_check`).
     #[arg(long)]
     allow_loose_signing_cert: bool,
+    /// Require the Microsoft Lifetime Signing EKU used by Azure Public Trust Test certificates.
+    #[arg(long)]
+    require_lifetime_signing_eku: bool,
     /// Prefer nested RFC3161 **`TSTInfo.genTime`** (unsigned attrs) and PKCS#9 **`signing-time`** for picky **`exact_date`** (timestamp token signatures are **not** verified).
     #[arg(long)]
     prefer_timestamp_signing_time: bool,
@@ -185,6 +188,7 @@ fn trust_verify_options_from_shared(a: &TrustVerifySharedArgs) -> Result<TrustVe
         },
         policy: AuthenticodeTrustPolicy {
             strict_code_signing_eku: !a.allow_loose_signing_cert,
+            require_lifetime_signing_eku: a.require_lifetime_signing_eku,
             prefer_timestamp_signing_time: a.prefer_timestamp_signing_time,
             require_valid_timestamp: a.require_valid_timestamp,
         },
@@ -222,6 +226,7 @@ mod trust_source_tests {
             expect_authroot_cab_sha256: None,
             verbose_chain: false,
             allow_loose_signing_cert: false,
+            require_lifetime_signing_eku: false,
             prefer_timestamp_signing_time: false,
             require_valid_timestamp: false,
             as_of: None,
@@ -245,6 +250,7 @@ fn trust_verify_args_present(a: &TrustVerifySharedArgs) -> bool {
         || !a.additional_trusted_ca.is_empty()
         || a.authroot_cab.is_some()
         || a.expect_authroot_cab_sha256.is_some()
+        || a.require_lifetime_signing_eku
         || a.as_of.is_some()
         || a.online_aia
         || a.online_ocsp

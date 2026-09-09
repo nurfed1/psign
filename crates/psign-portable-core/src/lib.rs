@@ -2584,6 +2584,7 @@ fn trust_options(
             },
             policy: AuthenticodeTrustPolicy {
                 strict_code_signing_eku: false,
+                require_lifetime_signing_eku: false,
                 prefer_timestamp_signing_time: request.prefer_timestamp_signing_time
                     || request.require_valid_timestamp,
                 require_valid_timestamp: request.require_valid_timestamp,
