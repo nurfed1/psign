@@ -83,7 +83,8 @@ struct TrustVerifySharedArgs {
     /// Trust this CA certificate file as an anchor (repeatable, PEM or DER).
     #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
     trusted_ca: Vec<PathBuf>,
-    /// Add this CA to the automatic Microsoft AuthRoot trust set (repeatable, PEM or DER).
+    /// Add a CA without replacing the selected or automatically discovered trust anchors
+    /// (repeatable, PEM or DER).
     #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
     additional_trusted_ca: Vec<PathBuf>,
     #[arg(long, value_name = "PATH")]
@@ -163,12 +164,7 @@ fn trust_verify_options_from_shared(a: &TrustVerifySharedArgs) -> Result<TrustVe
     let effective_aia = a.online_aia || authroot_cab.is_some();
     Ok(TrustVerifyPeOptions {
         anchor_dir: a.anchor_dir.clone(),
-        trusted_ca_files: a
-            .trusted_ca
-            .iter()
-            .chain(&a.additional_trusted_ca)
-            .cloned()
-            .collect(),
+        trusted_ca_files: combined_trusted_ca_files(&a.trusted_ca, &a.additional_trusted_ca),
         authroot_cab,
         expect_authroot_cab_sha256,
         verification_instant_override,
@@ -204,38 +200,86 @@ fn resolve_authroot_cab_for_shared(a: &TrustVerifySharedArgs) -> Result<Option<P
     )
 }
 
+fn combined_trusted_ca_files(
+    trusted_ca: &[PathBuf],
+    additional_trusted_ca: &[PathBuf],
+) -> Vec<PathBuf> {
+    trusted_ca
+        .iter()
+        .chain(additional_trusted_ca)
+        .cloned()
+        .collect()
+}
+
 fn explicit_anchors_replace_automatic_authroot(a: &TrustVerifySharedArgs) -> bool {
-    a.anchor_dir.is_some() || !a.trusted_ca.is_empty()
+    explicit_anchor_inputs_present(a.anchor_dir.as_deref(), &a.trusted_ca)
+}
+
+fn explicit_anchor_inputs_present(anchor_dir: Option<&Path>, trusted_ca: &[PathBuf]) -> bool {
+    anchor_dir.is_some() || !trusted_ca.is_empty()
 }
 
 #[cfg(test)]
 mod trust_source_tests {
     use super::*;
 
-    #[test]
-    fn additional_ca_does_not_replace_automatic_authroot() {
-        let args = TrustVerifySharedArgs {
-            anchor_dir: None,
-            trusted_ca: Vec::new(),
-            additional_trusted_ca: vec![PathBuf::from("test-root.cer")],
-            authroot_cab: None,
-            expect_authroot_cab_sha256: None,
-            verbose_chain: false,
-            allow_loose_signing_cert: false,
-            prefer_timestamp_signing_time: false,
-            require_valid_timestamp: false,
-            as_of: None,
-            online_aia: false,
-            aia_url_override: None,
-            online_ocsp: false,
-            ocsp_url_override: None,
-            revocation_mode: CliRevocationMode::Off,
-            crl_url_override: None,
-            online_timeout_secs: 5,
-            online_max_download_bytes: 1024 * 1024,
-        };
+    #[derive(Parser)]
+    struct SharedTrustArgsParser {
+        #[command(flatten)]
+        shared: TrustVerifySharedArgs,
+    }
 
-        assert!(!explicit_anchors_replace_automatic_authroot(&args));
+    fn path(name: &str) -> PathBuf {
+        PathBuf::from(name)
+    }
+
+    #[test]
+    fn only_explicit_anchor_inputs_replace_automatic_authroot() {
+        assert!(!explicit_anchor_inputs_present(None, &[]));
+        assert!(explicit_anchor_inputs_present(
+            Some(Path::new("anchors")),
+            &[]
+        ));
+        assert!(explicit_anchor_inputs_present(None, &[path("root.cer")]));
+        assert!(explicit_anchor_inputs_present(
+            Some(Path::new("anchors")),
+            &[path("root.cer")]
+        ));
+    }
+
+    #[test]
+    fn trusted_and_additional_ca_files_are_merged_in_argument_order() {
+        let trusted_ca = [path("explicit-a.cer"), path("explicit-b.cer")];
+        let additional_trusted_ca = [path("additional-a.cer"), path("additional-b.cer")];
+
+        let merged = combined_trusted_ca_files(&trusted_ca, &additional_trusted_ca);
+
+        assert_eq!(
+            merged,
+            vec![
+                path("explicit-a.cer"),
+                path("explicit-b.cer"),
+                path("additional-a.cer"),
+                path("additional-b.cer")
+            ]
+        );
+    }
+
+    #[test]
+    fn additional_trusted_ca_is_repeatable_on_trust_commands() {
+        let args = SharedTrustArgsParser::try_parse_from([
+            "trust-args",
+            "--additional-trusted-ca",
+            "test-root-a.cer",
+            "--additional-trusted-ca",
+            "test-root-b.cer",
+        ])
+        .expect("parse repeatable additional trust anchors");
+
+        assert_eq!(
+            args.shared.additional_trusted_ca,
+            vec![path("test-root-a.cer"), path("test-root-b.cer")]
+        );
     }
 }
 
@@ -1957,7 +2001,7 @@ enum Command {
     VerifyPe { path: PathBuf },
     /// Verify PE Authenticode **trust**: PKCS#7 CMS validation + certificate chain to portable anchors (no OS store).
     ///
-    /// Uses the automatic Microsoft AuthRoot CAB cache when no anchors are supplied. Supply **`--anchor-dir`** (Phase A: `.crt`/`.cer`/`.pem`) and/or **`--authroot-cab`** (extract certs + CTL thumbs from AuthRoot-style CAB `.stl` payloads) for explicit trust inputs. **`verify-pe`** remains digest-only; this subcommand adds chain + policy checks.
+    /// Uses the automatic Microsoft AuthRoot CAB cache when no replacing anchors are supplied. Supply **`--anchor-dir`** (Phase A: `.crt`/`.cer`/`.pem`) and/or **`--authroot-cab`** (extract certs + CTL thumbs from AuthRoot-style CAB `.stl` payloads) for explicit trust inputs, or **`--additional-trusted-ca`** to augment the selected trust set. **`verify-pe`** remains digest-only; this subcommand adds chain + policy checks.
     TrustVerifyPe {
         path: PathBuf,
         #[command(flatten)]
