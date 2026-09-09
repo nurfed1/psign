@@ -2092,6 +2092,7 @@ dependencies = [
  "anyhow",
  "base64",
  "mockito",
+ "rcgen",
  "reqwest",
  "serde",
  "serde_json",

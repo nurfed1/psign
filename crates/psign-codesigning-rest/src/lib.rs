@@ -5,16 +5,19 @@ use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::Value;
+use std::io::Read;
 use std::thread;
 use std::time::Duration;
 use url::Url;
-use x509_cert::{Certificate, der::Decode as _};
+use x509_cert::{Certificate, der::Decode as _, ext::pkix::BasicConstraints};
 
 pub const DEFAULT_API_VERSION: &str = "2024-06-15";
 /// Preview API version used by the profile root-certificate operation.
 pub const DEFAULT_PROFILE_ROOT_API_VERSION: &str = "2022-06-15-preview";
 const DEFAULT_SCOPE: &str = "https://codesigning.azure.net/.default";
 const MI_RESOURCE: &str = "https://codesigning.azure.net";
+const MAX_PROFILE_ROOT_BYTES: usize = 1024 * 1024;
+const MAX_PROFILE_ROOT_ERROR_BYTES: usize = 64 * 1024;
 const AZURE_DATA_PLANE_SUFFIXES: [&str; 2] =
     [".codesigning.azure.net", ".artifactsigning.azure.net"];
 
@@ -720,9 +723,14 @@ fn fetch_profile_root_certificate(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(ToOwned::to_owned);
-    let body = response
-        .bytes()
-        .context("read Artifact Signing root certificate response")?;
+    let max_body_bytes = if status.is_success() {
+        MAX_PROFILE_ROOT_BYTES
+    } else {
+        MAX_PROFILE_ROOT_ERROR_BYTES
+    };
+    let body = read_bounded_body(response, max_body_bytes).with_context(|| {
+        format!("read Artifact Signing root certificate HTTP {status} response")
+    })?;
     if !status.is_success() {
         return Err(anyhow!(
             "Artifact Signing root certificate HTTP {}: {}",
@@ -751,8 +759,32 @@ fn validate_root_certificate_response(content_type: Option<&str>, body: &[u8]) -
             ));
         }
     }
-    Certificate::from_der(body).context("parse Artifact Signing root certificate DER")?;
+    let certificate =
+        Certificate::from_der(body).context("parse Artifact Signing root certificate DER")?;
+    let basic_constraints = certificate
+        .tbs_certificate
+        .get::<BasicConstraints>()
+        .context("parse Artifact Signing root certificate Basic Constraints")?;
+    if !basic_constraints.is_some_and(|(_, constraints)| constraints.ca) {
+        return Err(anyhow!(
+            "Artifact Signing returned a certificate that is not a CA"
+        ));
+    }
     Ok(())
+}
+
+fn read_bounded_body(reader: impl Read, max_bytes: usize) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    reader
+        .take(max_bytes as u64 + 1)
+        .read_to_end(&mut body)
+        .context("read HTTP response body")?;
+    if body.len() > max_bytes {
+        return Err(anyhow!(
+            "Artifact Signing root certificate response exceeds {max_bytes} bytes"
+        ));
+    }
+    Ok(body)
 }
 
 fn sign_result_object(v: &Value) -> &Value {
@@ -792,6 +824,7 @@ pub fn submit_codesign_hash_signature_blocking(
 mod tests {
     use super::*;
     use mockito::{Matcher, Server};
+    use rcgen::{CertificateParams, KeyPair};
 
     const TEST_ROOT_DER: &[u8] =
         include_bytes!("../../../tests/fixtures/devolutions-authenticode/authenticode-test-ca.crt");
@@ -906,6 +939,27 @@ mod tests {
 
         let empty_error = validate_root_certificate_response(None, &[]).unwrap_err();
         assert!(empty_error.to_string().contains("empty"), "{empty_error:#}");
+    }
+
+    #[test]
+    fn root_certificate_response_rejects_non_ca_certificate() {
+        let key = KeyPair::generate().expect("leaf key");
+        let params = CertificateParams::new(vec!["leaf.test".into()]).expect("leaf params");
+        let leaf = params.self_signed(&key).expect("self-signed leaf");
+
+        let error =
+            validate_root_certificate_response(Some("application/x-x509-ca-cert"), leaf.der())
+                .unwrap_err();
+
+        assert!(error.to_string().contains("not a CA"), "{error:#}");
+    }
+
+    #[test]
+    fn response_body_reader_enforces_the_byte_limit() {
+        assert_eq!(read_bounded_body(&b"1234"[..], 4).unwrap(), b"1234");
+
+        let error = read_bounded_body(&b"12345"[..], 4).unwrap_err();
+        assert!(error.to_string().contains("exceeds 4 bytes"), "{error:#}");
     }
 
     #[test]
