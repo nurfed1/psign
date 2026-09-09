@@ -625,9 +625,10 @@ pub fn submit_codesign_hash_blocking(
     poll_operation(&http, &token, &poll_url)
 }
 
-/// Retrieve the root certificate currently associated with an Artifact Signing profile.
-pub fn get_codesigning_root_certificate_blocking(
+fn get_codesigning_profile_resource_blocking(
     params: &CodesigningProfileParams,
+    resource: &str,
+    accept: &str,
 ) -> Result<Vec<u8>> {
     let token = acquire_codesigning_token(&params.auth, params.authority.as_deref())?;
     let endpoint = params.endpoint_base_url.trim().trim_end_matches('/');
@@ -653,7 +654,7 @@ pub fn get_codesigning_root_certificate_blocking(
             "certificateprofiles",
             profile,
             "sign",
-            "rootcert",
+            resource,
         ]);
     url.query_pairs_mut().append_pair("api-version", api);
     let response = reqwest::blocking::Client::builder()
@@ -662,26 +663,45 @@ pub fn get_codesigning_root_certificate_blocking(
         .map_err(|e| anyhow!("HTTP client: {e}"))?
         .get(url)
         .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", "application/x-x509-ca-cert, application/json")
+        .header("Accept", accept)
         .send()
-        .context("Artifact Signing root certificate GET")?;
+        .with_context(|| format!("Artifact Signing profile {resource} GET"))?;
     let status = response.status();
     let body = response
         .bytes()
-        .context("read Artifact Signing root certificate response")?;
+        .with_context(|| format!("read Artifact Signing profile {resource} response"))?;
     if !status.is_success() {
         return Err(anyhow!(
-            "Artifact Signing root certificate HTTP {}: {}",
+            "Artifact Signing profile {resource} HTTP {}: {}",
             status,
             String::from_utf8_lossy(&body)
         ));
     }
     if body.is_empty() {
         return Err(anyhow!(
-            "Artifact Signing returned an empty root certificate"
+            "Artifact Signing returned an empty {resource} response"
         ));
     }
     Ok(body.to_vec())
+}
+
+/// Retrieve the root certificate currently associated with an Artifact Signing profile.
+pub fn get_codesigning_root_certificate_blocking(
+    params: &CodesigningProfileParams,
+) -> Result<Vec<u8>> {
+    get_codesigning_profile_resource_blocking(
+        params,
+        "rootcert",
+        "application/x-x509-ca-cert, application/json",
+    )
+}
+
+/// Retrieve the EKU OIDs configured for an Artifact Signing profile.
+pub fn get_codesigning_profile_ekus_blocking(
+    params: &CodesigningProfileParams,
+) -> Result<Vec<String>> {
+    let body = get_codesigning_profile_resource_blocking(params, "eku", "application/json")?;
+    serde_json::from_slice(&body).context("parse Artifact Signing profile EKU response")
 }
 
 fn sign_result_object(v: &Value) -> &Value {

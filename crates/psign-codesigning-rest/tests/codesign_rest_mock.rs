@@ -4,7 +4,8 @@ use base64::Engine as _;
 use mockito::{Matcher, Server};
 use psign_codesigning_rest::{
     CodesigningAuth, CodesigningProfileParams, CodesigningSubmitParams,
-    get_codesigning_root_certificate_blocking, submit_codesign_hash_blocking,
+    get_codesigning_profile_ekus_blocking, get_codesigning_root_certificate_blocking,
+    submit_codesign_hash_blocking,
 };
 use serde_json::json;
 
@@ -37,6 +38,96 @@ fn retrieves_profile_root_certificate() {
 
     let root = get_codesigning_root_certificate_blocking(&params).expect("root certificate");
     assert_eq!(root, expected);
+    root_mock.assert();
+}
+
+fn profile_params(endpoint_base_url: String) -> CodesigningProfileParams {
+    CodesigningProfileParams {
+        account_name: "theacct".into(),
+        profile_name: "theprof".into(),
+        api_version: "2022-06-15-preview".into(),
+        authority: None,
+        auth: CodesigningAuth::Bearer("fake-token".into()),
+        endpoint_base_url,
+    }
+}
+
+#[test]
+fn retrieves_profile_ekus() {
+    let mut server = Server::new();
+    let eku_mock = server
+        .mock(
+            "GET",
+            Matcher::Regex(
+                r"/codesigningaccounts/theacct/certificateprofiles/theprof/sign/eku(\?.*)?$"
+                    .to_string(),
+            ),
+        )
+        .match_header("authorization", "Bearer fake-token")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"["1.3.6.1.5.5.7.3.3","1.3.6.1.4.1.311.10.3.13"]"#)
+        .create();
+
+    let ekus =
+        get_codesigning_profile_ekus_blocking(&profile_params(server.url())).expect("profile EKUs");
+    assert_eq!(ekus, ["1.3.6.1.5.5.7.3.3", "1.3.6.1.4.1.311.10.3.13"]);
+    eku_mock.assert();
+}
+
+#[test]
+fn profile_eku_rejects_invalid_json() {
+    let mut server = Server::new();
+    let eku_mock = server
+        .mock("GET", Matcher::Regex(r".*/sign/eku(\?.*)?$".to_string()))
+        .with_status(200)
+        .with_body("not JSON")
+        .create();
+
+    let error = get_codesigning_profile_ekus_blocking(&profile_params(server.url()))
+        .expect_err("invalid JSON must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("parse Artifact Signing profile EKU response")
+    );
+    eku_mock.assert();
+}
+
+#[test]
+fn profile_root_reports_http_error_body() {
+    let mut server = Server::new();
+    let root_mock = server
+        .mock(
+            "GET",
+            Matcher::Regex(r".*/sign/rootcert(\?.*)?$".to_string()),
+        )
+        .with_status(403)
+        .with_body("profile access denied")
+        .create();
+
+    let error = get_codesigning_root_certificate_blocking(&profile_params(server.url()))
+        .expect_err("HTTP failure must fail");
+    let message = error.to_string();
+    assert!(message.contains("403 Forbidden"));
+    assert!(message.contains("profile access denied"));
+    root_mock.assert();
+}
+
+#[test]
+fn profile_root_rejects_empty_response() {
+    let mut server = Server::new();
+    let root_mock = server
+        .mock(
+            "GET",
+            Matcher::Regex(r".*/sign/rootcert(\?.*)?$".to_string()),
+        )
+        .with_status(200)
+        .create();
+
+    let error = get_codesigning_root_certificate_blocking(&profile_params(server.url()))
+        .expect_err("empty root must fail");
+    assert!(error.to_string().contains("empty rootcert response"));
     root_mock.assert();
 }
 
