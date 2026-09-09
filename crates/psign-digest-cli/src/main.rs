@@ -24,9 +24,8 @@ use psign_azure_kv_rest::{
 #[cfg(feature = "artifact-signing-rest")]
 use psign_codesigning_rest::{
     CodesigningAuth, CodesigningAuthInput, CodesigningCredentialType, CodesigningProfileParams,
-    CodesigningSubmitParams, DEFAULT_API_VERSION, get_codesigning_profile_ekus_blocking,
-    get_codesigning_root_certificate_blocking, resolve_codesigning_auth,
-    submit_codesign_hash_blocking, submit_codesign_hash_signature_blocking,
+    CodesigningSubmitParams, DEFAULT_API_VERSION, get_codesigning_root_certificate_blocking,
+    resolve_codesigning_auth, submit_codesign_hash_blocking, submit_codesign_hash_signature_blocking,
 };
 use psign_opc_sign::{nuget, vsix};
 use psign_sip_digest::cab_digest::{self,
@@ -2499,12 +2498,6 @@ enum Command {
         #[command(flatten)]
         args: ArtifactSigningRootPortableArgs,
     },
-    /// Retrieve and optionally require EKU OIDs configured for an authenticated Artifact Signing profile.
-    #[cfg(feature = "artifact-signing-rest")]
-    ArtifactSigningProfileEkus {
-        #[command(flatten)]
-        args: ArtifactSigningProfileEkusPortableArgs,
-    },
     /// Azure Key Vault **`keys/sign`** over a **precomputed digest file** (RSA PKCS#1 or ECDSA). Requires **`--features azure-kv-sign-portable`**. Does **not** embed Authenticode — use **`psign-tool`** for that.
     #[cfg(feature = "azure-kv-sign-portable")]
     AzureKeyVaultSignDigest {
@@ -3291,24 +3284,6 @@ struct ArtifactSigningSubmitPortableArgs {
 #[cfg(feature = "artifact-signing-rest")]
 #[derive(Args, Debug, Clone)]
 struct ArtifactSigningRootPortableArgs {
-    #[command(flatten)]
-    profile: ArtifactSigningProfilePortableArgs,
-    #[arg(long)]
-    output: PathBuf,
-}
-
-#[cfg(feature = "artifact-signing-rest")]
-#[derive(Args, Debug, Clone)]
-struct ArtifactSigningProfileEkusPortableArgs {
-    #[command(flatten)]
-    profile: ArtifactSigningProfilePortableArgs,
-    #[arg(long = "require-eku")]
-    required_ekus: Vec<String>,
-}
-
-#[cfg(feature = "artifact-signing-rest")]
-#[derive(Args, Debug, Clone)]
-struct ArtifactSigningProfilePortableArgs {
     #[arg(long)]
     endpoint: String,
     #[arg(long)]
@@ -3317,6 +3292,8 @@ struct ArtifactSigningProfilePortableArgs {
     profile_name: String,
     #[arg(long, default_value = "2022-06-15-preview")]
     api_version: String,
+    #[arg(long)]
+    output: PathBuf,
     #[arg(long)]
     access_token: Option<String>,
     #[arg(long)]
@@ -3435,20 +3412,6 @@ fn run_portable_artifact_signing_submit(args: ArtifactSigningSubmitPortableArgs)
 
 #[cfg(feature = "artifact-signing-rest")]
 fn run_portable_artifact_signing_root(args: ArtifactSigningRootPortableArgs) -> Result<()> {
-    let params = portable_artifact_signing_profile_params(args.profile)?;
-    let root = get_codesigning_root_certificate_blocking(&params)?;
-    psign_authenticode_trust::anchor::parse_cert_bytes(&root)
-        .context("parse Artifact Signing root certificate")?;
-    std::fs::write(&args.output, root)
-        .with_context(|| format!("write {}", args.output.display()))?;
-    println!("output={}", args.output.display());
-    Ok(())
-}
-
-#[cfg(feature = "artifact-signing-rest")]
-fn portable_artifact_signing_profile_params(
-    args: ArtifactSigningProfilePortableArgs,
-) -> Result<CodesigningProfileParams> {
     let auth = portable_submit_auth_parts(
         args.access_token.as_deref(),
         args.managed_identity,
@@ -3460,62 +3423,21 @@ fn portable_artifact_signing_profile_params(
         args.federated_token_file.as_deref(),
         Vec::new(),
     )?;
-    Ok(CodesigningProfileParams {
+    let params = CodesigningProfileParams {
         account_name: args.account_name,
         profile_name: args.profile_name,
         api_version: args.api_version,
         authority: args.authority,
         auth,
         endpoint_base_url: args.endpoint,
-    })
-}
-
-#[cfg(feature = "artifact-signing-rest")]
-fn missing_required_ekus<'a>(ekus: &[String], required: &'a [String]) -> Vec<&'a str> {
-    required
-        .iter()
-        .map(String::as_str)
-        .filter(|required_eku| !ekus.iter().any(|eku| eku == required_eku))
-        .collect()
-}
-
-#[cfg(feature = "artifact-signing-rest")]
-fn run_portable_artifact_signing_profile_ekus(
-    args: ArtifactSigningProfileEkusPortableArgs,
-) -> Result<()> {
-    let required_ekus = args.required_ekus;
-    let params = portable_artifact_signing_profile_params(args.profile)?;
-    let ekus = get_codesigning_profile_ekus_blocking(&params)?;
-    let missing = missing_required_ekus(&ekus, &required_ekus);
-    if !missing.is_empty() {
-        return Err(anyhow!(
-            "Artifact Signing profile is missing required EKU OID(s): {}",
-            missing.join(", ")
-        ));
-    }
-    for eku in ekus {
-        println!("eku={eku}");
-    }
+    };
+    let root = get_codesigning_root_certificate_blocking(&params)?;
+    psign_authenticode_trust::anchor::parse_cert_bytes(&root)
+        .context("parse Artifact Signing root certificate")?;
+    std::fs::write(&args.output, root)
+        .with_context(|| format!("write {}", args.output.display()))?;
+    println!("output={}", args.output.display());
     Ok(())
-}
-
-#[cfg(all(test, feature = "artifact-signing-rest"))]
-mod artifact_signing_profile_tests {
-    use super::missing_required_ekus;
-
-    #[test]
-    fn required_ekus_accept_exact_matches() {
-        let ekus = vec!["1.2.3".to_string(), "1.2.4".to_string()];
-        let required = vec!["1.2.4".to_string()];
-        assert!(missing_required_ekus(&ekus, &required).is_empty());
-    }
-
-    #[test]
-    fn required_ekus_report_every_missing_oid() {
-        let ekus = vec!["1.2.3".to_string()];
-        let required = vec!["1.2.4".to_string(), "1.2.5".to_string()];
-        assert_eq!(missing_required_ekus(&ekus, &required), ["1.2.4", "1.2.5"]);
-    }
 }
 
 #[cfg(feature = "azure-kv-sign-portable")]
@@ -5492,10 +5414,6 @@ where
         #[cfg(feature = "artifact-signing-rest")]
         Command::ArtifactSigningRoot { args } => {
             run_portable_artifact_signing_root(args)?;
-        }
-        #[cfg(feature = "artifact-signing-rest")]
-        Command::ArtifactSigningProfileEkus { args } => {
-            run_portable_artifact_signing_profile_ekus(args)?;
         }
         #[cfg(feature = "azure-kv-sign-portable")]
         Command::AzureKeyVaultSignDigest { args } => {
