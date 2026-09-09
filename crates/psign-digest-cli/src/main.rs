@@ -83,6 +83,9 @@ struct TrustVerifySharedArgs {
     /// Trust this CA certificate file as an anchor (repeatable, PEM or DER).
     #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
     trusted_ca: Vec<PathBuf>,
+    /// Add this CA to the automatic Microsoft AuthRoot trust set (repeatable, PEM or DER).
+    #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
+    additional_trusted_ca: Vec<PathBuf>,
     #[arg(long, value_name = "PATH")]
     authroot_cab: Option<PathBuf>,
     /// Require **`--authroot-cab`** file SHA-256 (64 lowercase hex chars) to match before ingest.
@@ -160,7 +163,12 @@ fn trust_verify_options_from_shared(a: &TrustVerifySharedArgs) -> Result<TrustVe
     let effective_aia = a.online_aia || authroot_cab.is_some();
     Ok(TrustVerifyPeOptions {
         anchor_dir: a.anchor_dir.clone(),
-        trusted_ca_files: a.trusted_ca.clone(),
+        trusted_ca_files: a
+            .trusted_ca
+            .iter()
+            .chain(&a.additional_trusted_ca)
+            .cloned()
+            .collect(),
         authroot_cab,
         expect_authroot_cab_sha256,
         verification_instant_override,
@@ -187,7 +195,7 @@ fn resolve_authroot_cab_for_shared(a: &TrustVerifySharedArgs) -> Result<Option<P
     if let Some(cab) = &a.authroot_cab {
         return Ok(Some(cab.clone()));
     }
-    if a.anchor_dir.is_some() || !a.trusted_ca.is_empty() {
+    if explicit_anchors_replace_automatic_authroot(a) {
         return Ok(None);
     }
     Ok(
@@ -196,9 +204,45 @@ fn resolve_authroot_cab_for_shared(a: &TrustVerifySharedArgs) -> Result<Option<P
     )
 }
 
+fn explicit_anchors_replace_automatic_authroot(a: &TrustVerifySharedArgs) -> bool {
+    a.anchor_dir.is_some() || !a.trusted_ca.is_empty()
+}
+
+#[cfg(test)]
+mod trust_source_tests {
+    use super::*;
+
+    #[test]
+    fn additional_ca_does_not_replace_automatic_authroot() {
+        let args = TrustVerifySharedArgs {
+            anchor_dir: None,
+            trusted_ca: Vec::new(),
+            additional_trusted_ca: vec![PathBuf::from("test-root.cer")],
+            authroot_cab: None,
+            expect_authroot_cab_sha256: None,
+            verbose_chain: false,
+            allow_loose_signing_cert: false,
+            prefer_timestamp_signing_time: false,
+            require_valid_timestamp: false,
+            as_of: None,
+            online_aia: false,
+            aia_url_override: None,
+            online_ocsp: false,
+            ocsp_url_override: None,
+            revocation_mode: CliRevocationMode::Off,
+            crl_url_override: None,
+            online_timeout_secs: 5,
+            online_max_download_bytes: 1024 * 1024,
+        };
+
+        assert!(!explicit_anchors_replace_automatic_authroot(&args));
+    }
+}
+
 fn trust_verify_args_present(a: &TrustVerifySharedArgs) -> bool {
     a.anchor_dir.is_some()
         || !a.trusted_ca.is_empty()
+        || !a.additional_trusted_ca.is_empty()
         || a.authroot_cab.is_some()
         || a.expect_authroot_cab_sha256.is_some()
         || a.as_of.is_some()
