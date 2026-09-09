@@ -212,11 +212,7 @@ fn combined_trusted_ca_files(
 }
 
 fn explicit_anchors_replace_automatic_authroot(a: &TrustVerifySharedArgs) -> bool {
-    explicit_anchor_inputs_present(a.anchor_dir.as_deref(), &a.trusted_ca)
-}
-
-fn explicit_anchor_inputs_present(anchor_dir: Option<&Path>, trusted_ca: &[PathBuf]) -> bool {
-    anchor_dir.is_some() || !trusted_ca.is_empty()
+    a.anchor_dir.is_some() || !a.trusted_ca.is_empty()
 }
 
 #[cfg(test)]
@@ -233,17 +229,42 @@ mod trust_source_tests {
         PathBuf::from(name)
     }
 
+    fn parse_shared_args(args: &[&str]) -> TrustVerifySharedArgs {
+        SharedTrustArgsParser::try_parse_from(
+            std::iter::once("trust-args").chain(args.iter().copied()),
+        )
+        .expect("parse shared trust arguments")
+        .shared
+    }
+
     #[test]
-    fn only_explicit_anchor_inputs_replace_automatic_authroot() {
-        assert!(!explicit_anchor_inputs_present(None, &[]));
-        assert!(explicit_anchor_inputs_present(
-            Some(Path::new("anchors")),
-            &[]
+    fn additional_ca_does_not_replace_automatic_authroot() {
+        let additional_only = parse_shared_args(&[
+            "--additional-trusted-ca",
+            "additional-root.cer",
+        ]);
+        assert!(!explicit_anchors_replace_automatic_authroot(
+            &additional_only
         ));
-        assert!(explicit_anchor_inputs_present(None, &[path("root.cer")]));
-        assert!(explicit_anchor_inputs_present(
-            Some(Path::new("anchors")),
-            &[path("root.cer")]
+
+        let with_trusted_ca = parse_shared_args(&[
+            "--additional-trusted-ca",
+            "additional-root.cer",
+            "--trusted-ca",
+            "explicit-root.cer",
+        ]);
+        assert!(explicit_anchors_replace_automatic_authroot(
+            &with_trusted_ca
+        ));
+
+        let with_anchor_dir = parse_shared_args(&[
+            "--additional-trusted-ca",
+            "additional-root.cer",
+            "--anchor-dir",
+            "anchors",
+        ]);
+        assert!(explicit_anchors_replace_automatic_authroot(
+            &with_anchor_dir
         ));
     }
 
@@ -267,17 +288,15 @@ mod trust_source_tests {
 
     #[test]
     fn additional_trusted_ca_is_repeatable_on_trust_commands() {
-        let args = SharedTrustArgsParser::try_parse_from([
-            "trust-args",
+        let args = parse_shared_args(&[
             "--additional-trusted-ca",
             "test-root-a.cer",
             "--additional-trusted-ca",
             "test-root-b.cer",
-        ])
-        .expect("parse repeatable additional trust anchors");
+        ]);
 
         assert_eq!(
-            args.shared.additional_trusted_ca,
+            args.additional_trusted_ca,
             vec![path("test-root-a.cer"), path("test-root-b.cer")]
         );
     }
