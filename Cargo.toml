@@ -119,6 +119,7 @@ winresource = "0.1.31"
 # now-stable cipher dependencies. Use the corresponding upstream fixes until
 # the next cms prerelease is published.
 [patch.crates-io]
+authenticode = { git = "https://github.com/nurfed1/authenticode-rs.git", rev = "62c6790fd2f76c2a95cd756071745de7e1f50dee" }
 cms = { git = "https://github.com/RustCrypto/formats.git", rev = "2fb80dd7144c6edd2ef780a642de44ab32eadd94" }
 
 [[bin]]

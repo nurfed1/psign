@@ -12,7 +12,7 @@ sha2 = "0.11"
 sha1 = { version = "0.11", default-features = false }
 digest = "0.11"
 object = { version = "0.37", default-features = false, features = ["pe", "read_core", "unaligned", "std"] }
-authenticode = { version = "0.6.0", features = ["std", "object"] }
+authenticode = { version = "0.6.0", features = ["object"] }
 cms = { version = "0.3.0-pre.2", features = ["builder"] }
 x509-cert = { version = "0.3", default-features = false, features = ["pem"] }
 der = { version = "0.8", features = ["derive"] }
