@@ -23,9 +23,9 @@ use psign_azure_kv_rest::{
 };
 #[cfg(feature = "artifact-signing-rest")]
 use psign_codesigning_rest::{
-    CodesigningAuth, CodesigningAuthInput, CodesigningCredentialType, CodesigningSubmitParams,
-    DEFAULT_API_VERSION, resolve_codesigning_auth, submit_codesign_hash_blocking,
-    submit_codesign_hash_signature_blocking,
+    CodesigningAuth, CodesigningAuthInput, CodesigningCredentialType, CodesigningProfileParams,
+    CodesigningSubmitParams, DEFAULT_API_VERSION, get_codesigning_root_certificate_blocking,
+    resolve_codesigning_auth, submit_codesign_hash_blocking, submit_codesign_hash_signature_blocking,
 };
 use psign_opc_sign::{nuget, vsix};
 use psign_sip_digest::cab_digest::{self,
@@ -83,6 +83,9 @@ struct TrustVerifySharedArgs {
     /// Trust this CA certificate file as an anchor (repeatable, PEM or DER).
     #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
     trusted_ca: Vec<PathBuf>,
+    /// Add this CA to the automatic Microsoft AuthRoot trust set (repeatable, PEM or DER).
+    #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
+    additional_trusted_ca: Vec<PathBuf>,
     #[arg(long, value_name = "PATH")]
     authroot_cab: Option<PathBuf>,
     /// Require **`--authroot-cab`** file SHA-256 (64 lowercase hex chars) to match before ingest.
@@ -160,7 +163,12 @@ fn trust_verify_options_from_shared(a: &TrustVerifySharedArgs) -> Result<TrustVe
     let effective_aia = a.online_aia || authroot_cab.is_some();
     Ok(TrustVerifyPeOptions {
         anchor_dir: a.anchor_dir.clone(),
-        trusted_ca_files: a.trusted_ca.clone(),
+        trusted_ca_files: a
+            .trusted_ca
+            .iter()
+            .chain(&a.additional_trusted_ca)
+            .cloned()
+            .collect(),
         authroot_cab,
         expect_authroot_cab_sha256,
         verification_instant_override,
@@ -187,7 +195,7 @@ fn resolve_authroot_cab_for_shared(a: &TrustVerifySharedArgs) -> Result<Option<P
     if let Some(cab) = &a.authroot_cab {
         return Ok(Some(cab.clone()));
     }
-    if a.anchor_dir.is_some() || !a.trusted_ca.is_empty() {
+    if explicit_anchors_replace_automatic_authroot(a) {
         return Ok(None);
     }
     Ok(
@@ -196,9 +204,45 @@ fn resolve_authroot_cab_for_shared(a: &TrustVerifySharedArgs) -> Result<Option<P
     )
 }
 
+fn explicit_anchors_replace_automatic_authroot(a: &TrustVerifySharedArgs) -> bool {
+    a.anchor_dir.is_some() || !a.trusted_ca.is_empty()
+}
+
+#[cfg(test)]
+mod trust_source_tests {
+    use super::*;
+
+    #[test]
+    fn additional_ca_does_not_replace_automatic_authroot() {
+        let args = TrustVerifySharedArgs {
+            anchor_dir: None,
+            trusted_ca: Vec::new(),
+            additional_trusted_ca: vec![PathBuf::from("test-root.cer")],
+            authroot_cab: None,
+            expect_authroot_cab_sha256: None,
+            verbose_chain: false,
+            allow_loose_signing_cert: false,
+            prefer_timestamp_signing_time: false,
+            require_valid_timestamp: false,
+            as_of: None,
+            online_aia: false,
+            aia_url_override: None,
+            online_ocsp: false,
+            ocsp_url_override: None,
+            revocation_mode: CliRevocationMode::Off,
+            crl_url_override: None,
+            online_timeout_secs: 5,
+            online_max_download_bytes: 1024 * 1024,
+        };
+
+        assert!(!explicit_anchors_replace_automatic_authroot(&args));
+    }
+}
+
 fn trust_verify_args_present(a: &TrustVerifySharedArgs) -> bool {
     a.anchor_dir.is_some()
         || !a.trusted_ca.is_empty()
+        || !a.additional_trusted_ca.is_empty()
         || a.authroot_cab.is_some()
         || a.expect_authroot_cab_sha256.is_some()
         || a.as_of.is_some()
@@ -2448,6 +2492,12 @@ enum Command {
         #[command(flatten)]
         args: ArtifactSigningSubmitPortableArgs,
     },
+    /// Retrieve the root certificate currently associated with an authenticated Artifact Signing profile.
+    #[cfg(feature = "artifact-signing-rest")]
+    ArtifactSigningRoot {
+        #[command(flatten)]
+        args: ArtifactSigningRootPortableArgs,
+    },
     /// Azure Key Vault **`keys/sign`** over a **precomputed digest file** (RSA PKCS#1 or ECDSA). Requires **`--features azure-kv-sign-portable`**. Does **not** embed Authenticode — use **`psign-tool`** for that.
     #[cfg(feature = "azure-kv-sign-portable")]
     AzureKeyVaultSignDigest {
@@ -3231,6 +3281,39 @@ struct ArtifactSigningSubmitPortableArgs {
     endpoint_base_url: Option<String>,
 }
 
+#[cfg(feature = "artifact-signing-rest")]
+#[derive(Args, Debug, Clone)]
+struct ArtifactSigningRootPortableArgs {
+    #[arg(long)]
+    endpoint: String,
+    #[arg(long)]
+    account_name: String,
+    #[arg(long)]
+    profile_name: String,
+    #[arg(long, default_value = "2022-06-15-preview")]
+    api_version: String,
+    #[arg(long)]
+    output: PathBuf,
+    #[arg(long)]
+    access_token: Option<String>,
+    #[arg(long)]
+    managed_identity: bool,
+    #[arg(long)]
+    managed_identity_resource_id: Option<String>,
+    #[arg(long, value_enum)]
+    credential_type: Option<ArtifactSigningCredentialType>,
+    #[arg(long)]
+    tenant_id: Option<String>,
+    #[arg(long)]
+    client_id: Option<String>,
+    #[arg(long)]
+    client_secret: Option<String>,
+    #[arg(long)]
+    federated_token_file: Option<String>,
+    #[arg(long)]
+    authority: Option<String>,
+}
+
 #[derive(Args, Debug, Clone, Default)]
 struct ArtifactSigningPortableOptions {
     /// Artifact Signing metadata JSON (same shape as Microsoft's dlib /dmdf file).
@@ -3324,6 +3407,36 @@ fn run_portable_artifact_signing_submit(args: ArtifactSigningSubmitPortableArgs)
         }
     })?;
     println!("{}", serde_json::to_string_pretty(&v)?);
+    Ok(())
+}
+
+#[cfg(feature = "artifact-signing-rest")]
+fn run_portable_artifact_signing_root(args: ArtifactSigningRootPortableArgs) -> Result<()> {
+    let auth = portable_submit_auth_parts(
+        args.access_token.as_deref(),
+        args.managed_identity,
+        args.managed_identity_resource_id.as_deref(),
+        args.credential_type,
+        args.tenant_id.as_deref(),
+        args.client_id.as_deref(),
+        args.client_secret.as_deref(),
+        args.federated_token_file.as_deref(),
+        Vec::new(),
+    )?;
+    let params = CodesigningProfileParams {
+        account_name: args.account_name,
+        profile_name: args.profile_name,
+        api_version: args.api_version,
+        authority: args.authority,
+        auth,
+        endpoint_base_url: args.endpoint,
+    };
+    let root = get_codesigning_root_certificate_blocking(&params)?;
+    psign_authenticode_trust::anchor::parse_cert_bytes(&root)
+        .context("parse Artifact Signing root certificate")?;
+    std::fs::write(&args.output, root)
+        .with_context(|| format!("write {}", args.output.display()))?;
+    println!("output={}", args.output.display());
     Ok(())
 }
 
@@ -5297,6 +5410,10 @@ where
         #[cfg(feature = "artifact-signing-rest")]
         Command::ArtifactSigningSubmit { args } => {
             run_portable_artifact_signing_submit(args)?;
+        }
+        #[cfg(feature = "artifact-signing-rest")]
+        Command::ArtifactSigningRoot { args } => {
+            run_portable_artifact_signing_root(args)?;
         }
         #[cfg(feature = "azure-kv-sign-portable")]
         Command::AzureKeyVaultSignDigest { args } => {

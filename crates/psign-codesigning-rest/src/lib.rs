@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::thread;
 use std::time::Duration;
+use url::Url;
 
 pub const DEFAULT_API_VERSION: &str = "2024-06-15";
 const DEFAULT_SCOPE: &str = "https://codesigning.azure.net/.default";
@@ -73,6 +74,18 @@ pub struct CodesigningSubmitParams {
     /// Default: `https://{region}.codesigning.azure.net`. Used by integration tests;
     /// omit in production unless pointing at a non-standard endpoint.
     pub endpoint_base_url: Option<String>,
+}
+
+/// Parameters for authenticated certificate-profile metadata reads.
+#[derive(Debug, Clone)]
+pub struct CodesigningProfileParams {
+    pub account_name: String,
+    pub profile_name: String,
+    pub api_version: String,
+    pub authority: Option<String>,
+    pub auth: CodesigningAuth,
+    /// Data-plane origin (scheme + host and optional port), without a trailing slash.
+    pub endpoint_base_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -418,8 +431,8 @@ fn acquire_workload_identity_token(
     Ok(j.access_token)
 }
 
-fn acquire_codesigning_token(params: &CodesigningSubmitParams) -> Result<String> {
-    match &params.auth {
+fn acquire_codesigning_token(auth: &CodesigningAuth, authority: Option<&str>) -> Result<String> {
+    match auth {
         CodesigningAuth::Bearer(tok) => {
             let t = tok.trim();
             if t.is_empty() {
@@ -435,22 +448,12 @@ fn acquire_codesigning_token(params: &CodesigningSubmitParams) -> Result<String>
             tenant_id,
             client_id,
             client_secret,
-        } => acquire_client_credentials_token(
-            params.authority.as_deref(),
-            tenant_id,
-            client_id,
-            client_secret,
-        ),
+        } => acquire_client_credentials_token(authority, tenant_id, client_id, client_secret),
         CodesigningAuth::WorkloadIdentity {
             tenant_id,
             client_id,
             federated_token_file,
-        } => acquire_workload_identity_token(
-            params.authority.as_deref(),
-            tenant_id,
-            client_id,
-            federated_token_file,
-        ),
+        } => acquire_workload_identity_token(authority, tenant_id, client_id, federated_token_file),
         CodesigningAuth::DefaultChain {
             exclude_credentials,
         } => {
@@ -463,12 +466,7 @@ fn acquire_codesigning_token(params: &CodesigningSubmitParams) -> Result<String>
                 env_text("AZURE_CLIENT_ID"),
                 env_text("AZURE_CLIENT_SECRET"),
             ) {
-                match acquire_client_credentials_token(
-                    params.authority.as_deref(),
-                    &tenant,
-                    &client,
-                    &secret,
-                ) {
+                match acquire_client_credentials_token(authority, &tenant, &client, &secret) {
                     Ok(token) => return Ok(token),
                     Err(e) => errors.push(format!("EnvironmentCredential: {e:#}")),
                 }
@@ -480,12 +478,7 @@ fn acquire_codesigning_token(params: &CodesigningSubmitParams) -> Result<String>
                     env_text("AZURE_FEDERATED_TOKEN_FILE"),
                 )
             {
-                match acquire_workload_identity_token(
-                    params.authority.as_deref(),
-                    &tenant,
-                    &client,
-                    &token_file,
-                ) {
+                match acquire_workload_identity_token(authority, &tenant, &client, &token_file) {
                     Ok(token) => return Ok(token),
                     Err(e) => errors.push(format!("WorkloadIdentityCredential: {e:#}")),
                 }
@@ -553,7 +546,7 @@ pub fn submit_codesign_hash_blocking(
         return Err(anyhow!("digest is empty"));
     }
 
-    let token = acquire_codesigning_token(params)?;
+    let token = acquire_codesigning_token(&params.auth, params.authority.as_deref())?;
     let http = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(300))
         .build()
@@ -632,6 +625,65 @@ pub fn submit_codesign_hash_blocking(
     poll_operation(&http, &token, &poll_url)
 }
 
+/// Retrieve the root certificate currently associated with an Artifact Signing profile.
+pub fn get_codesigning_root_certificate_blocking(
+    params: &CodesigningProfileParams,
+) -> Result<Vec<u8>> {
+    let token = acquire_codesigning_token(&params.auth, params.authority.as_deref())?;
+    let endpoint = params.endpoint_base_url.trim().trim_end_matches('/');
+    if endpoint.is_empty() {
+        return Err(anyhow!("Artifact Signing endpoint must not be empty"));
+    }
+
+    let account = params.account_name.trim();
+    let profile = params.profile_name.trim();
+    let api = params.api_version.trim();
+    if account.is_empty() || profile.is_empty() || api.is_empty() {
+        return Err(anyhow!(
+            "Artifact Signing account, profile, and API version must not be empty"
+        ));
+    }
+
+    let mut url = Url::parse(endpoint).context("parse Artifact Signing endpoint")?;
+    url.path_segments_mut()
+        .map_err(|_| anyhow!("Artifact Signing endpoint cannot be a base URL"))?
+        .extend([
+            "codesigningaccounts",
+            account,
+            "certificateprofiles",
+            profile,
+            "sign",
+            "rootcert",
+        ]);
+    url.query_pairs_mut().append_pair("api-version", api);
+    let response = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| anyhow!("HTTP client: {e}"))?
+        .get(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/x-x509-ca-cert, application/json")
+        .send()
+        .context("Artifact Signing root certificate GET")?;
+    let status = response.status();
+    let body = response
+        .bytes()
+        .context("read Artifact Signing root certificate response")?;
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Artifact Signing root certificate HTTP {}: {}",
+            status,
+            String::from_utf8_lossy(&body)
+        ));
+    }
+    if body.is_empty() {
+        return Err(anyhow!(
+            "Artifact Signing returned an empty root certificate"
+        ));
+    }
+    Ok(body.to_vec())
+}
+
 fn sign_result_object(v: &Value) -> &Value {
     v.get("result").unwrap_or(v)
 }
@@ -683,7 +735,7 @@ mod tests {
             auth: CodesigningAuth::Bearer("  ".into()),
             endpoint_base_url: None,
         };
-        assert!(acquire_codesigning_token(&p).is_err());
+        assert!(acquire_codesigning_token(&p.auth, p.authority.as_deref()).is_err());
     }
 
     #[test]
