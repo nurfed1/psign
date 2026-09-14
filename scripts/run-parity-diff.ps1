@@ -473,6 +473,14 @@ function Get-RustSignCredentialArgs {
     return $out
 }
 
+function Get-RustPortablePfxArgs {
+    $out = @("--pfx", $env:PSIGN_TEST_PFX)
+    if ($env:PSIGN_TEST_PFX_PASSWORD) {
+        $out += @("--password", $env:PSIGN_TEST_PFX_PASSWORD)
+    }
+    return $out
+}
+
 function Get-RustMsixCredentialArgs {
     # Prefer store thumbprint when CI bootstrap imported the test cert into `CurrentUser\My` — Rust `SignerSignEx3`
     # + MSIX SIP often succeeds with `--cert-sha1` while `--pfx` can hit `CRYPT_E_NO_PROVIDER` on some hosts.
@@ -1615,7 +1623,7 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     }
     $nativeMsiSign += @($tmpMsiNat)
 
-    $rustMsiSign = @("sign") + (Get-RustSignCredentialArgs) + @("--digest", "sha256")
+    $rustMsiSign = @("--mode", "portable", "sign") + (Get-RustPortablePfxArgs) + @("--digest", "sha256")
     if ($env:PSIGN_MSI_TIMESTAMP_URL) {
         $rustMsiSign += @("--timestamp-url", $env:PSIGN_MSI_TIMESTAMP_URL, "--timestamp-digest", "sha256")
     }
@@ -1633,7 +1641,7 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     # MsiDigitalSignatureEx bug because psign reproduced its own content-only digest.
     & "$nativeSignTool" verify /pa $tmpMsiRust 2>&1 | Out-Null
     $nativeMsiVerifyExit = $LASTEXITCODE
-    & "$rustBin" verify --policy pa $tmpMsiNat 2>&1 | Out-Null
+    & "$rustBin" portable verify-msi $tmpMsiNat 2>&1 | Out-Null
     $rustMsiVerifyExit = $LASTEXITCODE
     $bothMsiVerifyOk = ($nativeMsiVerifyExit -eq 0) -and ($rustMsiVerifyExit -eq 0)
 
@@ -1653,7 +1661,7 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     }
     $nativeMsiDescSign += @($tmpMsiDescNat)
 
-    $rustMsiDescSign = @("sign") + (Get-RustSignCredentialArgs) + @(
+    $rustMsiDescSign = @("--mode", "portable", "sign") + (Get-RustPortablePfxArgs) + @(
         "--digest", "sha256",
         "--description", $msiParityDesc, "--description-url", $msiParityUrl
     )
@@ -1672,9 +1680,9 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     $nativeMsiVerifyDescExit = -1
     $rustMsiVerifyDescExit = -1
     if ($nativeMsiDescSignExit -eq 0 -and $rustMsiDescSignExit -eq 0) {
-        $nativeMsiVerifyDescOut = (& "$nativeSignTool" @("verify", "/pa", "/v", "/d", $tmpMsiDescRust) 2>&1 | Out-String)
+        $nativeMsiVerifyDescOut = (& "$nativeSignTool" @("verify", "/pa", "/v", "/d", $tmpMsiDescNat) 2>&1 | Out-String)
         $nativeMsiVerifyDescExit = $LASTEXITCODE
-        $rustMsiVerifyDescOut = (& "$rustBin" @("verify", "--policy", "pa", "-v", "--print-description", $tmpMsiDescNat) 2>&1 | Out-String)
+        $rustMsiVerifyDescOut = (& "$nativeSignTool" @("verify", "/pa", "/v", "/d", $tmpMsiDescRust) 2>&1 | Out-String)
         $rustMsiVerifyDescExit = $LASTEXITCODE
     }
 
