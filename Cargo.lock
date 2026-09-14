@@ -339,7 +339,8 @@ dependencies = [
 [[package]]
 name = "cfb"
 version = "0.14.0"
-source = "git+https://github.com/mdsteele/rust-cfb?rev=087f53ffc753aa6ae8d52d07462849f84fa9bedb#087f53ffc753aa6ae8d52d07462849f84fa9bedb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a347dcabdae9c31b0825fd6a8bed285ec9c2acb89c47827126d52fa4f59cece3"
 dependencies = [
  "fnv",
  "uuid",
