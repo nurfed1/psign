@@ -154,4 +154,6 @@ jobs:
         if: always()
         with:
           name: parity-output-artifacts
-          path: parity-output/*.json
+          path: |
+            parity-output/*.json
+            parity-output/msi/*.msi
