@@ -36,6 +36,12 @@ jobs:
           ./scripts/ci/create-minimal-msi.ps1 -OutputMsi $msi
           $env:PSIGN_MSI_UNSIGNED_FIXTURE = $msi
           cargo test -p psign --test parity_signtool msi_sign_aligns_with_native_sip_stack -- --ignored --nocapture
+          $testExit = $LASTEXITCODE
+          $diagnosticDir = Join-Path $env:GITHUB_WORKSPACE "parity-output/msi"
+          New-Item -ItemType Directory -Force -Path $diagnosticDir | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:TEMP "psign_msi_itest_native.msi") -Destination (Join-Path $diagnosticDir "native-signed.msi") -Force
+          Copy-Item -LiteralPath (Join-Path $env:TEMP "psign_msi_itest_rust.msi") -Destination (Join-Path $diagnosticDir "portable-signed.msi") -Force
+          exit $testExit
 
       - name: Portable digest CLI integration test
         run: cargo test -p psign --test cli_pe_digest --locked
