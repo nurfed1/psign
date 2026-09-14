@@ -893,14 +893,14 @@ fn msi_sign_aligns_with_native_sip_stack() {
         .arg("/fd")
         .arg("SHA256")
         .arg("/f")
-        .arg(&pfx)
-        .arg(&tmp_nat);
+        .arg(&pfx);
     if let Some(ref p) = pw {
         native_cmd.arg("/p").arg(p);
     }
     if let Some(ref u) = ts {
         native_cmd.arg("/tr").arg(u).arg("/td").arg("SHA256");
     }
+    native_cmd.arg(&tmp_nat);
     let native_out = native_cmd.output().expect("native sign msi");
     assert!(
         native_out.status.success(),
@@ -916,8 +916,7 @@ fn msi_sign_aligns_with_native_sip_stack() {
         .arg("--pfx")
         .arg(&pfx)
         .arg("--digest")
-        .arg("sha256")
-        .arg(&tmp_rust);
+        .arg("sha256");
     if let Some(p) = pw {
         rust_cmd.arg("--password").arg(p);
     }
@@ -928,6 +927,7 @@ fn msi_sign_aligns_with_native_sip_stack() {
             .arg("--timestamp-digest")
             .arg("sha256");
     }
+    rust_cmd.arg(&tmp_rust);
     let rust_out = rust_cmd.output().expect("rust sign msi");
     assert!(
         rust_out.status.success(),
