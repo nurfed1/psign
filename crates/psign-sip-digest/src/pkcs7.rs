@@ -309,7 +309,11 @@ pub fn create_cab_authenticode_pkcs7_der_rsa(
     )
 }
 
-/// Create PKCS#7 `ContentInfo(SignedData)` DER for an MSI/MSP Authenticode signature using an RSA private key.
+/// Create PKCS#7 `ContentInfo(SignedData)` DER for a prepared MSI/MSP Authenticode signature using
+/// an RSA private key.
+///
+/// Obtain `msi_image` with [`crate::msi_digest::prepare_msi_for_authenticode_signing`] and embed
+/// this signature into that same staged image.
 pub fn create_msi_authenticode_pkcs7_der_rsa(
     msi_image: &[u8],
     digest_algorithm: AuthenticodeSigningDigest,
@@ -317,7 +321,7 @@ pub fn create_msi_authenticode_pkcs7_der_rsa(
     chain_certs: Vec<Certificate>,
     private_key: RsaPrivateKey,
 ) -> Result<Vec<u8>> {
-    let msi_digest = crate::msi_digest::compute_msi_authenticode_digest(
+    let msi_digest = crate::msi_digest::compute_prepared_msi_authenticode_digest(
         msi_image,
         digest_algorithm.pe_hash_kind(),
     )?;

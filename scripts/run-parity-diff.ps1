@@ -1629,9 +1629,11 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     if ($nativeMsiSignExit -eq 0 -and $rustMsiSignExit -eq 0) {
         $hashMsiMatch = ((Get-FileHash -LiteralPath $tmpMsiNat -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $tmpMsiRust -Algorithm SHA256).Hash)
     }
-    & "$nativeSignTool" verify /pa $tmpMsiNat 2>&1 | Out-Null
+    # Cross-verify the opposite implementation's output. Self-verification alone missed the
+    # MsiDigitalSignatureEx bug because psign reproduced its own content-only digest.
+    & "$nativeSignTool" verify /pa $tmpMsiRust 2>&1 | Out-Null
     $nativeMsiVerifyExit = $LASTEXITCODE
-    & "$rustBin" verify --policy pa $tmpMsiRust 2>&1 | Out-Null
+    & "$rustBin" verify --policy pa $tmpMsiNat 2>&1 | Out-Null
     $rustMsiVerifyExit = $LASTEXITCODE
     $bothMsiVerifyOk = ($nativeMsiVerifyExit -eq 0) -and ($rustMsiVerifyExit -eq 0)
 
@@ -1670,9 +1672,9 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     $nativeMsiVerifyDescExit = -1
     $rustMsiVerifyDescExit = -1
     if ($nativeMsiDescSignExit -eq 0 -and $rustMsiDescSignExit -eq 0) {
-        $nativeMsiVerifyDescOut = (& "$nativeSignTool" @("verify", "/pa", "/v", "/d", $tmpMsiDescNat) 2>&1 | Out-String)
+        $nativeMsiVerifyDescOut = (& "$nativeSignTool" @("verify", "/pa", "/v", "/d", $tmpMsiDescRust) 2>&1 | Out-String)
         $nativeMsiVerifyDescExit = $LASTEXITCODE
-        $rustMsiVerifyDescOut = (& "$rustBin" @("verify", "--policy", "pa", "-v", "--print-description", $tmpMsiDescRust) 2>&1 | Out-String)
+        $rustMsiVerifyDescOut = (& "$rustBin" @("verify", "--policy", "pa", "-v", "--print-description", $tmpMsiDescNat) 2>&1 | Out-String)
         $rustMsiVerifyDescExit = $LASTEXITCODE
     }
 
