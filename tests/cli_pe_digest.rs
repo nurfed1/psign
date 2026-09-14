@@ -3229,7 +3229,15 @@ fn sign_msi_creates_portable_authenticode_signature() {
     let signed = std::fs::read(&out_msi).expect("read signed MSI");
     let pkcs7 = msi_digest::msi_digital_signature_pkcs7_der(&signed).expect("extract MSI PKCS#7");
     let sd = pkcs7::parse_pkcs7_signed_data_der(&pkcs7).expect("parse SignedData");
-    let signed_attribute_oids = sd.signer_infos.0.as_slice()[0]
+    let signer_info = &sd.signer_infos.0.as_slice()[0];
+    assert_eq!(
+        signer_info.signature_algorithm.oid.to_string(),
+        "1.2.840.113549.1.1.1"
+    );
+    assert!(signer_info.signature_algorithm.parameters.is_some());
+    assert!(signer_info.digest_alg.parameters.is_some());
+    assert!(sd.digest_algorithms.as_slice()[0].parameters.is_some());
+    let signed_attribute_oids = signer_info
         .signed_attrs
         .as_ref()
         .expect("MSI signer has authenticated attributes")
