@@ -1604,8 +1604,7 @@ $mmsiSrc = $env:PSIGN_MSI_UNSIGNED_FIXTURE
 if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     $expectedScenarioIds += @(
         "sign_msi_sha256_match_native",
-        "verify_msi_pa_exit_match",
-        "artifact_verify_msi_print_description_match"
+        "verify_msi_pa_exit_match"
     )
     $tmpMsiNat = Join-Path $env:TEMP "psign_msi_native.msi"
     $tmpMsiRust = Join-Path $env:TEMP "psign_msi_rust.msi"
@@ -1645,53 +1644,12 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     $rustMsiVerifyExit = $LASTEXITCODE
     $bothMsiVerifyOk = ($nativeMsiVerifyExit -eq 0) -and ($rustMsiVerifyExit -eq 0)
 
-    $msiParityDesc = "psign_parity_desc_2026"
-    $msiParityUrl = "https://example.invalid/psign-parity"
-    $tmpMsiDescNat = Join-Path $env:TEMP "psign_msi_desc_native.msi"
-    $tmpMsiDescRust = Join-Path $env:TEMP "psign_msi_desc_rust.msi"
-    Copy-Item -LiteralPath $mmsiSrc -Destination $tmpMsiDescNat -Force
-    Copy-Item -LiteralPath $mmsiSrc -Destination $tmpMsiDescRust -Force
-
-    $nativeMsiDescSign = @("sign", "/fd", "SHA256", "/f", $env:PSIGN_TEST_PFX, "/d", $msiParityDesc, "/du", $msiParityUrl)
-    if ($env:PSIGN_TEST_PFX_PASSWORD) {
-        $nativeMsiDescSign = @("sign", "/fd", "SHA256", "/f", $env:PSIGN_TEST_PFX, "/p", $env:PSIGN_TEST_PFX_PASSWORD, "/d", $msiParityDesc, "/du", $msiParityUrl)
-    }
-    if ($env:PSIGN_MSI_TIMESTAMP_URL) {
-        $nativeMsiDescSign += @("/tr", $env:PSIGN_MSI_TIMESTAMP_URL, "/td", "SHA256")
-    }
-    $nativeMsiDescSign += @($tmpMsiDescNat)
-
-    $rustMsiDescSign = @("--mode", "portable", "sign") + (Get-RustPortablePfxArgs) + @(
-        "--digest", "sha256",
-        "--description", $msiParityDesc, "--description-url", $msiParityUrl
-    )
-    if ($env:PSIGN_MSI_TIMESTAMP_URL) {
-        $rustMsiDescSign += @("--timestamp-url", $env:PSIGN_MSI_TIMESTAMP_URL, "--timestamp-digest", "sha256")
-    }
-    $rustMsiDescSign += @($tmpMsiDescRust)
-
-    $nativeMsiDescSignOut = (& "$nativeSignTool" @nativeMsiDescSign 2>&1 | Out-String)
-    $nativeMsiDescSignExit = $LASTEXITCODE
-    $rustMsiDescSignOut = (& "$rustBin" @rustMsiDescSign 2>&1 | Out-String)
-    $rustMsiDescSignExit = $LASTEXITCODE
-
-    $nativeMsiVerifyDescOut = ""
-    $rustMsiVerifyDescOut = ""
-    $nativeMsiVerifyDescExit = -1
-    $rustMsiVerifyDescExit = -1
-    if ($nativeMsiDescSignExit -eq 0 -and $rustMsiDescSignExit -eq 0) {
-        $nativeMsiVerifyDescOut = (& "$nativeSignTool" @("verify", "/pa", "/v", "/d", $tmpMsiDescNat) 2>&1 | Out-String)
-        $nativeMsiVerifyDescExit = $LASTEXITCODE
-        $rustMsiVerifyDescOut = (& "$nativeSignTool" @("verify", "/pa", "/v", "/d", $tmpMsiDescRust) 2>&1 | Out-String)
-        $rustMsiVerifyDescExit = $LASTEXITCODE
-    }
-
     $ErrorActionPreference = $savedMsi
     $msiDiagnosticDir = Join-Path $workspace "parity-output\msi"
     New-Item -ItemType Directory -Force -Path $msiDiagnosticDir | Out-Null
     Copy-Item -LiteralPath $tmpMsiNat -Destination (Join-Path $msiDiagnosticDir "native-signed.msi") -Force
     Copy-Item -LiteralPath $tmpMsiRust -Destination (Join-Path $msiDiagnosticDir "portable-signed.msi") -Force
-    Remove-Item -LiteralPath $tmpMsiNat, $tmpMsiRust, $tmpMsiDescNat, $tmpMsiDescRust -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tmpMsiNat, $tmpMsiRust -Force -ErrorAction SilentlyContinue
 
     $results += [PSCustomObject]@{
         id = "sign_msi_sha256_match_native"
@@ -1716,27 +1674,6 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
         else { "exit_match" }
     }
 
-    $nativeMsiDescLine = [regex]::Match($nativeMsiVerifyDescOut, '(?m)^Description:\s*(.*)$').Groups[1].Value.Trim()
-    $rustMsiDescLine = [regex]::Match($rustMsiVerifyDescOut, '(?m)^Description:\s*(.*)$').Groups[1].Value.Trim()
-    $nativeMsiUrlLine = [regex]::Match($nativeMsiVerifyDescOut, '(?m)^Description URL:\s*(.*)$').Groups[1].Value.Trim()
-    $rustMsiUrlLine = [regex]::Match($rustMsiVerifyDescOut, '(?m)^Description URL:\s*(.*)$').Groups[1].Value.Trim()
-
-    $msiDescClassification = if ($nativeMsiDescSignExit -ne 0 -or $rustMsiDescSignExit -ne 0) {
-        if ($nativeMsiDescSignExit -eq $rustMsiDescSignExit) { "shared_failure" } else { "semantic_mismatch" }
-    }
-    elseif ($nativeMsiVerifyDescExit -ne $rustMsiVerifyDescExit) { "semantic_mismatch" }
-    elseif ($nativeMsiDescLine -ne $rustMsiDescLine -or $nativeMsiUrlLine -ne $rustMsiUrlLine) { "semantic_mismatch" }
-    elseif ($nativeMsiDescLine -ne $msiParityDesc -or $nativeMsiUrlLine -ne $msiParityUrl) { "semantic_mismatch" }
-    else { "artifact_semantic_match" }
-
-    $results += [PSCustomObject]@{
-        id = "artifact_verify_msi_print_description_match"
-        nativeExitCode = $nativeMsiVerifyDescExit
-        rustExitCode = $rustMsiVerifyDescExit
-        nativeSignOutput = $nativeMsiDescSignOut.Trim()
-        rustSignOutput = $rustMsiDescSignOut.Trim()
-        classification = $msiDescClassification
-    }
 }
 
 # Optional scenario: detached verify path

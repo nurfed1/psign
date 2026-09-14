@@ -910,6 +910,8 @@ fn msi_sign_aligns_with_native_sip_stack() {
 
     let mut rust_cmd = Command::cargo_bin("psign-tool").expect("binary available");
     rust_cmd
+        .arg("--mode")
+        .arg("portable")
         .arg("sign")
         .arg("--pfx")
         .arg(&pfx)
@@ -944,8 +946,9 @@ fn msi_sign_aligns_with_native_sip_stack() {
         .expect("native verify rust-signed msi");
     assert!(
         nv_rust.status.success(),
-        "{}",
-        String::from_utf8_lossy(&nv_rust.stdout)
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&nv_rust.stdout),
+        String::from_utf8_lossy(&nv_rust.stderr)
     );
 
     if nat_bytes != rust_bytes {

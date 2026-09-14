@@ -3229,6 +3229,15 @@ fn sign_msi_creates_portable_authenticode_signature() {
     let signed = std::fs::read(&out_msi).expect("read signed MSI");
     let pkcs7 = msi_digest::msi_digital_signature_pkcs7_der(&signed).expect("extract MSI PKCS#7");
     let sd = pkcs7::parse_pkcs7_signed_data_der(&pkcs7).expect("parse SignedData");
+    let signed_attribute_oids = sd.signer_infos.0.as_slice()[0]
+        .signed_attrs
+        .as_ref()
+        .expect("MSI signer has authenticated attributes")
+        .iter()
+        .map(|attribute| attribute.oid)
+        .collect::<Vec<_>>();
+    assert!(signed_attribute_oids.contains(&pkcs7::SPC_SP_OPUS_INFO_OID));
+    assert!(signed_attribute_oids.contains(&pkcs7::SPC_STATEMENT_TYPE_OID));
     let indirect = pkcs7::signed_data_spc_indirect_message_digest_octets(&sd).expect("indirect");
     let expected = msi_digest::compute_msi_authenticode_digest(
         &signed,

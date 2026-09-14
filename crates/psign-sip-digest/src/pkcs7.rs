@@ -86,6 +86,15 @@ pub const PKCS9_MESSAGE_DIGEST_OID: ObjectIdentifier =
 /// PKCS#9 **`contentType`** authenticated-attribute type OID.
 pub const PKCS9_CONTENT_TYPE_OID: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.3");
+/// Microsoft Authenticode statement-type authenticated-attribute OID.
+pub const SPC_STATEMENT_TYPE_OID: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.311.2.1.11");
+/// Microsoft Authenticode program-information authenticated-attribute OID.
+pub const SPC_SP_OPUS_INFO_OID: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.311.2.1.12");
+/// Microsoft individual-code-signing purpose carried by `SpcStatementType`.
+pub const SPC_INDIVIDUAL_CODE_SIGNING_OID: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.311.2.1.21");
 /// PKCS#9 **`signingTime`** authenticated-attribute type OID.
 pub const PKCS9_SIGNING_TIME_OID: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.5");
@@ -905,9 +914,14 @@ where
         issuer: signer_cert.tbs_certificate.issuer.clone(),
         serial_number: signer_cert.tbs_certificate.serial_number.clone(),
     });
-    let signer_info =
+    let mut signer_info =
         SignerInfoBuilder::new(&signer, signer_id, digest_alg.clone(), &content, None)
             .map_err(|e| anyhow!("build CMS SignerInfo: {e}"))?;
+    signer_info
+        .add_signed_attribute(spc_sp_opus_info_attribute()?)
+        .map_err(|e| anyhow!("add Authenticode SpcSpOpusInfo attribute: {e}"))?
+        .add_signed_attribute(spc_statement_type_attribute()?)
+        .map_err(|e| anyhow!("add Authenticode SpcStatementType attribute: {e}"))?;
     let mut builder = SignedDataBuilder::new(&content);
     builder
         .add_digest_algorithm(digest_alg)
@@ -1589,6 +1603,37 @@ fn pkcs9_content_type_attribute(content_type: ObjectIdentifier) -> Result<Attrib
     })
 }
 
+fn spc_sp_opus_info_attribute() -> Result<Attribute> {
+    let mut values = SetOfVec::new();
+    values
+        .insert(
+            Any::new(Tag::Sequence, Vec::new())
+                .map_err(|e| anyhow!("SpcSpOpusInfo AttributeValue ANY: {e}"))?,
+        )
+        .map_err(|e| anyhow!("SET OF SpcSpOpusInfo AttributeValue insert: {e}"))?;
+    Ok(Attribute {
+        oid: SPC_SP_OPUS_INFO_OID,
+        values,
+    })
+}
+
+fn spc_statement_type_attribute() -> Result<Attribute> {
+    let individual_code_signing = SPC_INDIVIDUAL_CODE_SIGNING_OID
+        .to_der()
+        .map_err(|e| anyhow!("individual-code-signing OID DER: {e}"))?;
+    let mut values = SetOfVec::new();
+    values
+        .insert(
+            Any::new(Tag::Sequence, individual_code_signing)
+                .map_err(|e| anyhow!("SpcStatementType AttributeValue ANY: {e}"))?,
+        )
+        .map_err(|e| anyhow!("SET OF SpcStatementType AttributeValue insert: {e}"))?;
+    Ok(Attribute {
+        oid: SPC_STATEMENT_TYPE_OID,
+        values,
+    })
+}
+
 fn pkcs9_signing_time_attribute() -> Result<Attribute> {
     let signing_time_der = UtcTime::from_system_time(std::time::SystemTime::now())
         .map_err(|e| anyhow!("signingTime UTC time: {e}"))?
@@ -1715,7 +1760,9 @@ fn authenticode_signed_attrs(
         &econtent,
     )?;
     SetOfVec::try_from(vec![
+        spc_sp_opus_info_attribute()?,
         pkcs9_content_type_attribute(authenticode::SPC_INDIRECT_DATA_OBJID)?,
+        spc_statement_type_attribute()?,
         pkcs9_message_digest_attribute(&econtent_digest)?,
     ])
     .map_err(|e| anyhow!("SignedAttributes SET OF Attribute canonicalization: {e}"))
@@ -1860,6 +1907,23 @@ mod tests {
     fn signed_data_oid_matches_rfc_display_form() {
         assert!(PKCS7_ID_SIGNED_DATA_OID.ends_with(".7.2"));
         assert!(PKCS7_ID_DATA_OID.ends_with(".7.1"));
+    }
+
+    #[test]
+    fn authenticode_signed_attrs_include_windows_code_signing_profile() {
+        let indirect = msi_spc_indirect_data(AuthenticodeSigningDigest::Sha256, &[0; 32])
+            .expect("MSI indirect data");
+        let attrs = authenticode_signed_attrs(&indirect, AuthenticodeSigningDigest::Sha256)
+            .expect("Authenticode signed attributes");
+        let oids = attrs
+            .iter()
+            .map(|attribute| attribute.oid)
+            .collect::<Vec<_>>();
+
+        assert!(oids.contains(&PKCS9_CONTENT_TYPE_OID));
+        assert!(oids.contains(&PKCS9_MESSAGE_DIGEST_OID));
+        assert!(oids.contains(&SPC_SP_OPUS_INFO_OID));
+        assert!(oids.contains(&SPC_STATEMENT_TYPE_OID));
     }
 
     fn assert_cms_encap_digest_matches_pkcs9(pe_bytes: &[u8]) {
