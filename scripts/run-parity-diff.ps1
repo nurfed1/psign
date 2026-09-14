@@ -1629,9 +1629,9 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     }
     $rustMsiSign += @($tmpMsiRust)
 
-    & "$nativeSignTool" @nativeMsiSign 2>&1 | Out-Null
+    $nativeMsiSignOut = (& "$nativeSignTool" @nativeMsiSign 2>&1 | Out-String)
     $nativeMsiSignExit = $LASTEXITCODE
-    & "$rustBin" @rustMsiSign 2>&1 | Out-Null
+    $rustMsiSignOut = (& "$rustBin" @rustMsiSign 2>&1 | Out-String)
     $rustMsiSignExit = $LASTEXITCODE
     $hashMsiMatch = $false
     if ($nativeMsiSignExit -eq 0 -and $rustMsiSignExit -eq 0) {
@@ -1639,9 +1639,9 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     }
     # Cross-verify the opposite implementation's output. Self-verification alone missed the
     # MsiDigitalSignatureEx bug because psign reproduced its own content-only digest.
-    & "$nativeSignTool" verify /pa $tmpMsiRust 2>&1 | Out-Null
+    $nativeMsiVerifyOut = (& "$nativeSignTool" verify /pa /v $tmpMsiRust 2>&1 | Out-String)
     $nativeMsiVerifyExit = $LASTEXITCODE
-    & "$rustBin" portable verify-msi $tmpMsiNat 2>&1 | Out-Null
+    $rustMsiVerifyOut = (& "$rustBin" portable verify-msi $tmpMsiNat 2>&1 | Out-String)
     $rustMsiVerifyExit = $LASTEXITCODE
     $bothMsiVerifyOk = ($nativeMsiVerifyExit -eq 0) -and ($rustMsiVerifyExit -eq 0)
 
@@ -1670,9 +1670,9 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     }
     $rustMsiDescSign += @($tmpMsiDescRust)
 
-    & "$nativeSignTool" @nativeMsiDescSign 2>&1 | Out-Null
+    $nativeMsiDescSignOut = (& "$nativeSignTool" @nativeMsiDescSign 2>&1 | Out-String)
     $nativeMsiDescSignExit = $LASTEXITCODE
-    & "$rustBin" @rustMsiDescSign 2>&1 | Out-Null
+    $rustMsiDescSignOut = (& "$rustBin" @rustMsiDescSign 2>&1 | Out-String)
     $rustMsiDescSignExit = $LASTEXITCODE
 
     $nativeMsiVerifyDescOut = ""
@@ -1687,12 +1687,20 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
     }
 
     $ErrorActionPreference = $savedMsi
+    $msiDiagnosticDir = Join-Path $workspace "parity-output\msi"
+    New-Item -ItemType Directory -Force -Path $msiDiagnosticDir | Out-Null
+    Copy-Item -LiteralPath $tmpMsiNat -Destination (Join-Path $msiDiagnosticDir "native-signed.msi") -Force
+    Copy-Item -LiteralPath $tmpMsiRust -Destination (Join-Path $msiDiagnosticDir "portable-signed.msi") -Force
     Remove-Item -LiteralPath $tmpMsiNat, $tmpMsiRust, $tmpMsiDescNat, $tmpMsiDescRust -Force -ErrorAction SilentlyContinue
 
     $results += [PSCustomObject]@{
         id = "sign_msi_sha256_match_native"
         nativeExitCode = $nativeMsiSignExit
         rustExitCode = $rustMsiSignExit
+        nativeSignOutput = $nativeMsiSignOut.Trim()
+        rustSignOutput = $rustMsiSignOut.Trim()
+        nativeVerifyPortableOutput = $nativeMsiVerifyOut.Trim()
+        portableVerifyNativeOutput = $rustMsiVerifyOut.Trim()
         classification = if ($nativeMsiSignExit -ne $rustMsiSignExit) { "semantic_mismatch" }
         elseif ($nativeMsiSignExit -ne 0) { "shared_failure" }
         elseif (-not $hashMsiMatch -and $bothMsiVerifyOk) { "artifact_semantic_match" }
@@ -1725,6 +1733,8 @@ if ($mmsiSrc -and $env:PSIGN_TEST_PFX -and (Test-Path -LiteralPath $mmsiSrc)) {
         id = "artifact_verify_msi_print_description_match"
         nativeExitCode = $nativeMsiVerifyDescExit
         rustExitCode = $rustMsiVerifyDescExit
+        nativeSignOutput = $nativeMsiDescSignOut.Trim()
+        rustSignOutput = $rustMsiDescSignOut.Trim()
         classification = $msiDescClassification
     }
 }
